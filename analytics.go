@@ -36,13 +36,13 @@ var DefaultContext = map[string]interface{}{
 var Backo = backo.DefaultBacko()
 
 // Message interface.
-type message interface {
+type Message interface {
 	setMessageId(string)
 	setTimestamp(string)
 }
 
 // Message fields common to all.
-type Message struct {
+type Base struct {
 	Type      string `json:"type,omitempty"`
 	MessageId string `json:"messageId,omitempty"`
 	Timestamp string `json:"timestamp,omitempty"`
@@ -53,7 +53,7 @@ type Message struct {
 type Batch struct {
 	Context  map[string]interface{} `json:"context,omitempty"`
 	Messages []interface{}          `json:"batch"`
-	Message
+	Base
 }
 
 // Identify message.
@@ -63,7 +63,7 @@ type Identify struct {
 	Traits       map[string]interface{} `json:"traits,omitempty"`
 	AnonymousId  string                 `json:"anonymousId,omitempty"`
 	UserId       string                 `json:"userId,omitempty"`
-	Message
+	Base
 }
 
 // Group message.
@@ -74,7 +74,7 @@ type Group struct {
 	AnonymousId  string                 `json:"anonymousId,omitempty"`
 	UserId       string                 `json:"userId,omitempty"`
 	GroupId      string                 `json:"groupId"`
-	Message
+	Base
 }
 
 // Track message.
@@ -85,7 +85,7 @@ type Track struct {
 	AnonymousId  string                 `json:"anonymousId,omitempty"`
 	UserId       string                 `json:"userId,omitempty"`
 	Event        string                 `json:"event"`
-	Message
+	Base
 }
 
 // Page message.
@@ -97,14 +97,14 @@ type Page struct {
 	UserId       string                 `json:"userId,omitempty"`
 	Category     string                 `json:"category,omitempty"`
 	Name         string                 `json:"name,omitempty"`
-	Message
+	Base
 }
 
 // Alias message.
 type Alias struct {
 	PreviousId string `json:"previousId"`
 	UserId     string `json:"userId"`
-	Message
+	Base
 }
 
 // Client which batches messages and flushes at the given Interval or
@@ -143,7 +143,7 @@ func New(key string) *Client {
 		Size:     250,
 		Logger:   log.New(os.Stderr, "segment ", log.LstdFlags),
 		Verbose:  false,
-		Client:   *http.DefaultClient,
+		Client:   http.Client{Timeout:time.Second * 20},
 		key:      key,
 		msgs:     make(chan interface{}, 100),
 		quit:     make(chan struct{}),
@@ -233,7 +233,7 @@ func (c *Client) startLoop() {
 }
 
 // Queue message.
-func (c *Client) queue(msg message) {
+func (c *Client) queue(msg Message) {
 	c.once.Do(c.startLoop)
 	msg.setMessageId(c.uid())
 	msg.setTimestamp(timestamp(c.now()))
@@ -270,6 +270,17 @@ func (c *Client) sendAsync(msgs []interface{}) {
 	}()
 }
 
+// Send messages synchronously
+func (c *Client) Send(msgs []Message) error {
+	outs := make([]interface{}, len(msgs))
+	for i, e := range msgs {
+		e.setMessageId(c.uid())
+		e.setTimestamp(timestamp(c.now()))
+		outs[i] = e
+	}
+	return c.send(outs)
+}
+
 // Send batch request.
 func (c *Client) send(msgs []interface{}) error {
 	if len(msgs) == 0 {
@@ -286,7 +297,7 @@ func (c *Client) send(msgs []interface{}) error {
 	if err != nil {
 		return fmt.Errorf("error marshalling msgs: %s", err)
 	}
-
+	
 	for i := 0; i < 10; i++ {
 		if err = c.upload(b); err == nil {
 			return nil
@@ -383,14 +394,14 @@ func (c *Client) logf(msg string, args ...interface{}) {
 }
 
 // Set message timestamp if one is not already set.
-func (m *Message) setTimestamp(s string) {
+func (m *Base) setTimestamp(s string) {
 	if m.Timestamp == "" {
 		m.Timestamp = s
 	}
 }
 
 // Set message id.
-func (m *Message) setMessageId(s string) {
+func (m *Base) setMessageId(s string) {
 	if m.MessageId == "" {
 		m.MessageId = s
 	}
